@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WiFi PCAP Analyzer</title>
+<style>
+{{CSS_MAIN}}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="logo">▌ WIFI · PCAP · ANALYZER</div>
+    <div class="subtitle">802.11 handshake inspector + WPA2-PSK dictionary cracker — runs entirely in-browser</div>
+  </header>
+
+  <!-- ── Panel 1: load ── -->
+  <div id="panel-load" class="panel active">
+    <div id="drop-zone">
+      <div class="big">⌁</div>
+      <p>Drop a <strong style="color:var(--green)">.pcap</strong> file here</p>
+      <p class="hint">Radiotap (link-type 127) and raw 802.11 (link-type 105) supported<br>
+         Nothing leaves your browser — all parsing is local</p>
+      <input type="file" id="file-input" accept=".pcap,.pcapng" style="display:none">
+    </div>
+  </div>
+
+  <!-- ── Panel 2: AP list ── -->
+  <div id="panel-aps" class="panel">
+    <div class="toolbar">
+      <div class="stitle" style="margin:0;border:none;">Access Points</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <span id="ap-stats" class="dim" style="font-size:11px;"></span>
+        <button class="btn" onclick="resetToLoad()">↩ New File</button>
+      </div>
+    </div>
+    <div class="table-wrap" role="region" aria-label="Access point table" tabindex="0">
+      <table>
+        <thead>
+          <tr>
+            <th>SSID</th>
+            <th>BSSID</th>
+            <th>Security</th>
+            <th>Group / Pairwise Cipher</th>
+            <th>AKM</th>
+            <th>EAPOL Sessions</th>
+            <th>Handshake</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="ap-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Panel 3: crack ── -->
+  <div id="panel-crack" class="panel">
+    <div class="toolbar" style="margin-bottom:14px;">
+      <button class="btn" onclick="showAPs()">← AP List</button>
+      <span id="crack-target-title" class="dim" style="font-size:11px;"></span>
+    </div>
+
+    <div class="two-col">
+      <div class="box">
+        <div class="stitle">Target AP</div>
+        <div id="tgt-info"></div>
+      </div>
+      <div class="box">
+        <div class="stitle">EAPOL Sessions</div>
+        <div id="tgt-sessions"></div>
+      </div>
+    </div>
+
+
+    <div class="box" id="advanced-box" style="margin-bottom:14px;">
+      <div class="stitle">Advanced Engine</div>
+      <div class="advanced-grid">
+        <div class="field">
+          <label for="crack-mode">Mode</label>
+          <select class="control" id="crack-mode">
+            <option value="js-worker">Mode 1 — JS multithreaded verifier</option>
+            <option value="wasm-mt" disabled>Mode 2 — WASM multithreading</option>
+            <option value="gpu-mt" disabled>Mode 3 — WebGPU</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="thread-count">Workers</label>
+          <input class="control" id="thread-count" type="number" min="1" max="64" step="1" value="1">
+        </div>
+        <div class="field">
+          <label>Browser capability</label>
+          <div class="cap-list" id="engine-caps"></div>
+        </div>
+      </div>
+      <div class="mode-grid" id="mode-cards">
+        <div class="mode-card" data-mode-card="js-worker">
+          <div class="mtitle">Mode 1 · JS MT</div>
+          <div class="mdesc">JavaScript worker pool using the selected worker count.</div>
+        </div>
+        <div class="mode-card blocked" data-mode-card="wasm-mt" id="mode-card-wasm">
+          <div class="unavailable">UNDER CONSTRUCTION</div>
+          <div class="mtitle">Mode 2 · WASM MT</div>
+          <div class="mdesc">Declaration only. Backend disabled.</div>
+        </div>
+        <div class="mode-card blocked" data-mode-card="gpu-mt" id="mode-card-gpu">
+          <div class="unavailable">UNDER CONSTRUCTION</div>
+          <div class="mtitle">Mode 3 · WebGPU</div>
+          <div class="mdesc">Declaration only. Backend disabled.</div>
+        </div>
+      </div>
+      <div id="engine-note" class="result-info" style="display:none;"></div>
+    </div>
+
+    <div class="box" style="margin-bottom:14px;">
+      <div class="stitle">Dictionary Attack</div>
+      <div class="wl-drop" id="wl-drop" onclick="document.getElementById('wl-input').click()">
+        <span id="wl-label">Drop wordlist here or click to browse</span>
+        <input type="file" id="wl-input" style="display:none">
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+        <button class="btn"     id="btn-crack" onclick="startCrack()" disabled>▶ Start</button>
+        <button class="btn btn-red" id="btn-stop"  onclick="stopCrack()"  disabled>■ Stop</button>
+        <span id="crack-sess-info" style="font-size:11px;color:var(--dim);"></span>
+      </div>
+      <div id="descver-warn" class="result-warn" style="display:none;">
+        ⚠ Some MIC frames use descriptor version 1 (HMAC-MD5 / legacy TKIP).
+        This cracker uses HMAC-SHA1 — results for those frames may be incorrect.
+        WPA2/CCMP sessions (descriptor v2) work correctly.
+      </div>
+    </div>
+
+    <div id="crack-area" style="display:none;">
+      <div class="pbar-wrap"><div class="pbar-fill" id="pbar"></div></div>
+      <div class="pbar-text" id="pbar-text">—</div>
+      <div id="crack-result"></div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<div id="statusbar">
+  <span id="status-msg">Ready — drop a PCAP file</span>
+  <span id="status-right"></span>
+</div>
+
+<script>
+{{JS_BUNDLE}}
+</script>
+</body>
+</html>
